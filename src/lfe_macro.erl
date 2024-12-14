@@ -463,12 +463,20 @@ exp_form(['let-macro',Mbs|B], Env, St) ->
 %% Core control special forms.
 exp_form([progn|As], Env, St) ->
     exp_normal_core(progn, As, Env, St);
+exp_form([prog1|As], Env, St) ->
+    exp_normal_core(prog1, As, Env, St);
+exp_form([prog2|As], Env, St) ->
+    exp_normal_core(prog2, As, Env, St);
 exp_form(['if'|As], Env, St) ->
     exp_normal_core('if', As, Env, St);
 exp_form(['case',E0|Cls0], Env, St0) ->
     {E1,St1} = exp_form(E0, Env, St0),
     {Cls1,St2} = exp_clauses(Cls0, Env, St1),
     {['case',E1|Cls1],St2};
+exp_form(['cond'|Body], Env, St) ->
+    exp_cond(Body, Env, St);
+exp_form(['maybe'|Body], Env, St) ->
+    exp_maybe(Body, Env, St);
 exp_form(['receive'|Cls0], Env, St0) ->
     {Cls1,St1} = exp_clauses(Cls0, Env, St0),
     {['receive'|Cls1],St1};
@@ -483,13 +491,13 @@ exp_form([call|As], Env, St) ->
     exp_normal_core(call, As, Env, St);
 %% List/binary comprehensions.
 exp_form([lc,Qs,Exp], Env, St0) ->
-    exp_list_comp('lc', Qs, Exp, Env, St0);
+    exp_list_comprehension('lc', Qs, Exp, Env, St0);
 exp_form(['list-comp',Qs,Exp], Env, St) ->
-    exp_list_comp('list-comp', Qs, Exp, Env, St);
+    exp_list_comprehension('list-comp', Qs, Exp, Env, St);
 exp_form([bc,Qs,Exp], Env, St) ->
-    exp_binary_comp('bc', Qs, Exp, Env, St);
+    exp_binary_comprehension('bc', Qs, Exp, Env, St);
 exp_form(['binary-comp',Qs,Exp], Env, St) ->
-    exp_binary_comp('binary-comp', Qs, Exp, Env, St);
+    exp_binary_comprehension('binary-comp', Qs, Exp, Env, St);
 %% Core definition special forms.
 exp_form(['eval-when-compile'|B], Env, St) ->
     exp_normal_core('eval-when-compile', B, Env, St);
@@ -664,6 +672,47 @@ exp_let_macro(Mbs, B0, Env0, St0) ->
     {B1,St1} = exp_tail(B0, Env1, St0),         %Expand the body
     {['progn'|B1],St1}.
 
+%% exp_cond(Body, Env, State) -> {Expansion,State}.
+
+exp_cond(Cls, Env, St0) ->
+    {Ecls,St1} = exp_cond_clauses(Cls, Env, St0),
+    {['cond'|Ecls],St1}.
+
+exp_cond_clauses(Cls, Env, St) ->
+    exp_tail(fun exp_cond_clause/3, Cls, Env, St).
+
+exp_cond_clause([['?='|TestPat]|Body], Env, St0) ->
+    {Et,St1} = exp_clause(TestPat, Env, St0),
+    {Eb,St2} = exp_tail(Body, Env, St1),
+    {[['?='|Et]|Eb],St2};
+exp_cond_clause(['else'|Body], Env, St0) ->
+    {Eb,St1} = exp_tail(Body, Env, St0),
+    {['else'|Eb],St1};
+exp_cond_clause(TestBody, Env, St) ->
+    exp_tail(TestBody, Env, St).
+
+%% exp_maybe(Body, Env, State) -> {Expansion,State}.
+
+exp_maybe(Body, Env, St0) ->
+    {Eb,St1} = exp_maybe_body(Body, Env, St0),
+    {['maybe'|Eb],St1}.
+
+exp_maybe_body(Es, Env, St) ->
+    exp_tail(fun exp_maybe_expr/3, Es, Env, St).
+
+exp_maybe_expr(['else'|Cls], Env, St0) ->
+    {Ecls,St1} = exp_clauses(Cls, Env, St0),
+    {['else'|Ecls],St1};
+exp_maybe_expr(['?='|Cond], Env, St0) ->
+    {Econd,St1} = exp_clause(Cond, Env, St0),
+    {['?='|Econd],St1};
+exp_maybe_expr(['let',Vbs|Body], Env, St0) ->
+    {Evbs,St1} = exp_clauses(Vbs, Env, St0),
+    {Eb,St2} = exp_maybe_body(Body, Env, St1),
+    {['let',Evbs|Eb],St2};
+exp_maybe_expr(E, Env, St) ->
+    exp_form(E, Env, St).
+
 %% exp_try(Expression, Body, Env, State) -> {Expansion,State}.
 %%  Expand a try.
 
@@ -682,57 +731,45 @@ exp_try(E0, B0, Env, St0) ->
                         end, B0, Env, St1),
     {['try',E1|B1],St2}.
 
-%% exp_list_comp(Comp, Qualifiers, Expr, Env, State) -> {Qualifiers,Exp,State}.
-%% exp_binary_comp(Comp, Qualifiers, BitStringExpr, Env, State) ->
+%% exp_list_comprehension(Comp, Qualifiers, Expr, Env, State) -> {Qualifiers,Exp,State}.
+%% exp_binary_comprehension(Comp, Qualifiers, BitStringExpr, Env, State) ->
 %%     {Qualifiers,BitStringExpr,State}.
 %%  Don't do much yet.
 
-exp_list_comp(Comp, Qs0, Expr0, Env, St0) ->
+exp_list_comprehension(Comp, Qs0, Expr0, Env, St0) ->
     {Expr1,St1} = exp_form(Expr0, Env, St0),
     %% io:format("lml ~p\n    ~p\n", [Expr0,Expr1]),
-    {Qs1,St2} = exp_comp_quals(Qs0, Env, St1),
+    {Qs1,St2} = exp_comprehension_quals(Qs0, Env, St1),
     {[Comp,Qs1,Expr1],St2}.
 
-exp_binary_comp(Comp, Qs0, BitExpr0, Env, St0) ->
+exp_binary_comprehension(Comp, Qs0, BitExpr0, Env, St0) ->
     {BitExpr1,St1} = exp_form(BitExpr0, Env, St0),
     %% io:format("lmb ~p\n   ~p\n", [BitExpr0,BitExpr1]),
-    {Qs1,St2} = exp_comp_quals(Qs0, Env, St1),
+    {Qs1,St2} = exp_comprehension_quals(Qs0, Env, St1),
     {[Comp,Qs1,BitExpr1],St2}.
 
-%% exp_comp_quals(Qualifiers, Env, State) -> {Qualifiers,State}.
+%% exp_comprehension_quals(Qualifiers, Env, State) -> {Qualifiers,State}.
 %%  We accept improper qualifier list here as the tail might expand
 %%  into a proper list. We will let the linter catch any errors.
 
-exp_comp_quals([['<-',Pat0,Exp0]|Qs0], Env, St0) ->
-    {Pat1,St1} = exp_form(Pat0, Env, St0),
-    {Exp1,St2} = exp_form(Exp0, Env, St1),
-    {Qs1,St3} = exp_comp_quals(Qs0, Env, St2),
-    {[['<-',Pat1,Exp1]|Qs1],St3};
-exp_comp_quals([['<-',Pat0,['when'|G0],Exp0]|Qs0], Env, St0) ->
-    {Pat1,St1} = exp_form(Pat0, Env, St0),
-    {G1,St2} = exp_tail(G0, Env, St1),
-    {Exp1,St3} = exp_form(Exp0, Env, St2),
-    {Qs1,St4} = exp_comp_quals(Qs0, Env, St3),
-    {[['<-',Pat1,['when'|G1],Exp1]|Qs1],St4};
-exp_comp_quals([['<=',Pat0,Exp0]|Qs0], Env, St0) ->
-    {Pat1,St1} = exp_form(Pat0, Env, St0),
-    {Exp1,St2} = exp_form(Exp0, Env, St1),
-    {Qs1,St3} = exp_comp_quals(Qs0, Env, St2),
-    {[['<=',Pat1,Exp1]|Qs1],St3};
-exp_comp_quals([['<=',Pat0,['when'|G0],Exp0]|Qs0], Env, St0) ->
-    {Pat1,St1} = exp_form(Pat0, Env, St0),
-    {G1,St2} = exp_tail(G0, Env, St1),
-    {Exp1,St3} = exp_form(Exp0, Env, St2),
-    {Qs1,St4} = exp_comp_quals(Qs0, Env, St3),
-    {[['<=',Pat1,['when'|G1],Exp1]|Qs1],St4};
-exp_comp_quals([Test0|Qs0], Env, St0) ->
-    {Test1,St1} = exp_form(Test0, Env, St0),
-    {Qs1,St2} = exp_comp_quals(Qs0, Env, St1),
-    {[Test1|Qs1],St2};
-exp_comp_quals(Other0, Env, St0) ->
+exp_comprehension_quals([Qual0|Qs0], Env, St0) ->
+    {Qual1,St1} = exp_comprehension_qual(Qual0, Env, St0),
+    {Qs1,St2} = exp_comprehension_quals(Qs0, Env, St1),
+    {[Qual1|Qs1],St2};
+exp_comprehension_quals(Other0, Env, St0) ->
     %% This also catches [].
     {Other1,St1} = exp_form(Other0, Env, St0),
     {Other1,St1}.
+
+exp_comprehension_qual(['<-'|Cls0], Env, St0) ->
+    {Cls1,St1} = exp_clause(Cls0, Env, St0),
+    {['<-'|Cls1],St1};
+exp_comprehension_qual(['<='|Cls0], Env, St0) ->
+    {Cls1,St1} = exp_clause(Cls0, Env, St0),
+    {['<='|Cls1],St1};
+exp_comprehension_qual(Test0, Env, St0) ->
+    {Test1,St1} = exp_form(Test0, Env, St0),
+    {Test1,St1}.
 
 %% exp_define_function(Name, Metq, Def, Env, State) -> {Expansion,State}.
 %%  Expand a function definition adding the function local macros:
@@ -916,7 +953,7 @@ exp_predef([Op|Es], _, St0)
        Op =:= '=='; Op =:= '=:=' ->
     case Es of
         [_|_] ->
-            {Exp,St1} = exp_comp(Es, Op, St0),
+            {Exp,St1} = exp_comparison(Es, Op, St0),
             {yes,Exp,St1}
     end;
 exp_predef([backquote,Bq], _, St) ->            %We do this here.
@@ -943,9 +980,6 @@ exp_predef(['let*'|Lbody], _, St) ->
     {yes,Exp,St};
 exp_predef(['flet*'|Lbody], _, St) ->
     Exp = exp_flet_star(Lbody),
-    {yes,Exp,St};
-exp_predef(['cond'|Cbody], _, St) ->
-    Exp = exp_cond(Cbody),
     {yes,Exp,St};
 exp_predef(['do'|Dbody], _, St0) ->
     {Exp,St1} = exp_do(Dbody, St0),
@@ -1159,15 +1193,15 @@ exp_logical([A,B], Op, St) -> {exp_bif(Op, [A,B]),St};
 exp_logical(As, Op, St) ->
     {foldl(fun (A, Acc) -> exp_bif(Op, [Acc,A]) end, hd(As), tl(As)),St}.
 
-%% exp_comp(Args, Op, State) -> {Exp,State}.
+%% exp_comparison(Args, Op, State) -> {Exp,State}.
 %%  Expand comparison test strictly forcing evaluation of all
 %%  arguments. Note that single argument version may need special
 %%  casing.
 
-exp_comp([A], _, St) ->            %Force evaluation
+exp_comparison([A], _, St) ->            %Force evaluation
     {[progn,A,?Q(true)],St};
-exp_comp([A,B], Op, St) -> {exp_bif(Op, [A,B]),St};
-exp_comp(As, Op, St0) ->
+exp_comparison([A,B], Op, St) -> {exp_bif(Op, [A,B]),St};
+exp_comparison(As, Op, St0) ->
     {Ls,St1} = exp_args(As, St0),
     Ts = op_pairs(Ls, Op),
     {exp_let_star([Ls,exp_andalso(Ts)]),St1}.
@@ -1254,20 +1288,6 @@ exp_flet_star([[Fb|Fbs]|B]) ->
     [flet,[Fb],exp_flet_star([Fbs|B])];
 exp_flet_star([[]|B]) -> [progn|B];
 exp_flet_star([Fb|B]) -> [flet,Fb|B].           %Pass error to flet for lint
-
-%% exp_cond(CondBody) -> Tests.
-%%  Expand a cond body to a sequence of if/case tests.
-
-exp_cond([['else'|B]]) -> [progn|B];
-exp_cond([[['?=',P,E]|B]|Cond]) ->
-    ['case',E,[P|B],['_',exp_cond(Cond)]];
-exp_cond([[['?=',P,['when'|_]=G,E]|B]|Cond]) ->
-    ['case',E,[P,G|B],['_',exp_cond(Cond)]];
-exp_cond([[Test|B]|Cond]) ->                    %Test and body
-    ['if',Test,[progn|B],exp_cond(Cond)];
-exp_cond([Test|Cond]) ->                        %Naked test
-    ['if',Test,?Q(true),exp_cond(Cond)];
-exp_cond([]) -> ?Q(false).
 
 %% exp_do(DoBody) -> DoLoop.
 %%  Expand a do body into a loop. Add a variable 'do-state' which is

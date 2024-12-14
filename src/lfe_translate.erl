@@ -841,11 +841,17 @@ to_expr(['letrec-function'|_], L, _, _) ->      %Can't do this efficently
     illegal_code_error(L, 'letrec-function');
 %% Core control special forms.
 to_expr([progn|B], L, Vt, St) ->
-    to_block(B, L, Vt, St);
+    to_progn(B, L, Vt, St);
+to_expr([prog1|B], L, Vt, St) ->
+    to_prog1(B, L, Vt, St);
+to_expr([prog2|B], L, Vt, St) ->
+    to_prog2(B, L, Vt, St);
 to_expr(['if'|Body], L, Vt, St) ->
     to_if(Body, L, Vt, St);
 to_expr(['case'|Body], L, Vt, St) ->
     to_case(Body, L, Vt, St);
+to_expr(['cond'|Body], L, Vt, St) ->
+    to_cond(Body, L, Vt, St);
 to_expr(['maybe'|Body], L, Vt, St) ->
     to_maybe(Body, L, Vt, St);
 to_expr(['receive'|Cls], L, Vt, St) ->
@@ -854,7 +860,6 @@ to_expr(['catch'|B], L, Vt, St0) ->
     {Eb,St1} = to_block(B, L, Vt, St0),
     {{'catch',L,Eb},St1};
 to_expr(['try'|Try], L, Vt, St) ->              %Can't do this yet
-    %% lfe_io:format("try ~w\n~p\n", [L,['try'|Try]]),
     to_try(Try, L, Vt, St);
 to_expr([funcall,F|As], L, Vt, St0) ->
     {Ef,St1} = to_expr(F, L, Vt, St0),
@@ -862,13 +867,13 @@ to_expr([funcall,F|As], L, Vt, St0) ->
     {{call,L,Ef,Eas},St2};
 %% List/binary comprehensions.
 to_expr([lc,Qs,E], L, Vt, St) ->
-    to_list_comp(Qs, E, L, Vt, St);
+    to_list_comprehension(Qs, E, L, Vt, St);
 to_expr(['list-comp',Qs,E], L, Vt, St) ->
-    to_list_comp(Qs, E, L, Vt, St);
+    to_list_comprehension(Qs, E, L, Vt, St);
 to_expr([bc,Qs,BS], L, Vt, St) ->
-    to_binary_comp(Qs, BS, L, Vt, St);
+    to_binary_comprehension(Qs, BS, L, Vt, St);
 to_expr(['binary-comp',Qs,BS], L, Vt, St) ->
-    to_binary_comp(Qs, BS, L, Vt, St);
+    to_binary_comprehension(Qs, BS, L, Vt, St);
 %% General function calls.
 to_expr([call,?Q(erlang),?Q(F)|As], L, Vt, St0) ->
     %% This is semantically the same but some tools behave differently
@@ -1195,6 +1200,22 @@ to_block(Es, L, Vt, St0) ->
         {Ees,St1} -> {{block,L,Ees},St1}        %Must wrap
     end.
 
+%% to_progn(Body, LineNumber, VarTable, State) -> {Block,State}.
+%% to_prog1(Body, LineNumber, VarTable, State) -> {Block,State}.
+%% to_prog2(Body, LineNumber, VarTable, State) -> {Block,State}.
+
+to_progn(Es, L, Vt, St) ->
+    to_block(Es, L, Vt, St).
+
+to_prog1([E|Es], L, Vt, St) ->
+    Prog1 = ['let',[['-prog-1-',E]] | Es ++ ['-prog-1-']],
+    to_expr(Prog1, L, Vt, St).
+
+to_prog2([E1,E2|Es], L, Vt, St) ->
+    Prog2 = [progn,E1,
+             ['let',[['-prog-2-',E2]] | Es ++ ['-prog-2-']]],
+    to_expr(Prog2, L, Vt, St).
+
 %% to_if(IfBody, LineNumber, VarTable, State) -> {ErlCase,State}.
 
 to_if([Test,True], L, Vt, St) ->
@@ -1218,6 +1239,27 @@ to_case([E|Cls], L, Vt, St0) ->
 to_case(_, L, _, _) ->
     illegal_code_error(L, 'case').
 
+%% to_cond(CondBody, LineNumber, VarTable, State) -> {ErlCond,State}.
+
+to_cond(Body, L, Vt, St) ->
+    Cond = to_cond_body(Body),
+    %% io:format("cond ~p\n", [Cond]),
+    to_expr(Cond, L, Vt, St).
+
+to_cond_body([['else'|Body]]) ->
+    ['progn'|Body];
+to_cond_body([[['?=',Pat,['when'|G],Exp]|Tbody]|Body]) ->
+    ['case',Exp,
+     [Pat,['when'|G]|Tbody],
+     ['_',to_cond_body(Body)]];
+to_cond_body([[['?=',Pat,Exp]|Tbody]|Body]) ->
+    ['case',Exp,
+     [Pat|Tbody],
+     ['_',to_cond_body(Body)]];
+to_cond_body([[Test|Tbody]|Body]) ->
+    ['if',Test,[progn|Tbody],to_cond_body(Body)];
+to_cond_body([]) -> ?Q(false).
+
 %% to_maybe(MaybeBody, LineNumber, VarTable, State) -> {ErlMaybe,State}.
 %%  We have 2 different versions here depending on which version of
 %%  Erlang we are using. If is OTP 27 or later we transform to use the
@@ -1239,7 +1281,7 @@ to_maybe_body([['else'|_Cls]], _L, _Vt, St) ->
     %% Already done else elsewhere.
     {[],St};
 to_maybe_body([['?=',Pat,E]|Mes], L, Vt0, St0) ->
-    {Ematch,Vt1,St1} = 
+    {Ematch,Vt1,St1} =
         to_maybe_let_binding(Pat, E, maybe_match, L, Vt0, Vt0, St0),
     {Emes,St2} = to_maybe_body(Mes, L, Vt1, St1),
     {[Ematch | Emes],St2};
@@ -1443,6 +1485,7 @@ to_icr_cl([P|B], L, Vt0, St0) ->
 %%  progn in try expression which is not really necessary.
 
 to_try([E|Try], L, Vt, St0) ->
+    %% lfe_io:format("try ~w\n~p\n", [L,['try',E|Try]]),
     {Ee,St1} = to_try_expr(E, L, Vt, St0),
     {Ecase,Ecatch,Eafter,St2} = to_try_sections(Try, L, Vt, St1, [], [], []),
     {{'try',L,Ee,Ecase,Ecatch,Eafter},St2}.
@@ -1473,18 +1516,18 @@ to_try_catch_cl(['_'|Body], L, Vt, St) ->
 to_try_catch_cl(Cl, L, Vt, St) ->
     to_icr_cl(Cl, L, Vt, St).
 
-%% to_list_comp(Qualifiers, Expr, LineNumber, VarTable. State) ->
+%% to_list_comprehension(Qualifiers, Expr, LineNumber, VarTable, State) ->
 %%     {ListComprehension,State}.
 
-to_list_comp(Qs, Expr, L, Vt0, St0) ->
+to_list_comprehension(Qs, Expr, L, Vt0, St0) ->
     {Eqs,Vt1,St1} = to_comp_quals(Qs, L, Vt0, St0),
     {Eexpr,St2} = to_expr(Expr, L, Vt1, St1),
     {{lc,L,Eexpr,Eqs},St2}.
 
-%% to_binary_comp(Qualifiers, BitStringExpr, LineNumber, VarTable. State) ->
+%% to_binary_comprehension(Qualifiers, Expr, LineNumber, VarTable, State) ->
 %%     {BinaryComprehension,State}.
 
-to_binary_comp(Qs, Expr, L, Vt0, St0) ->
+to_binary_comprehension(Qs, Expr, L, Vt0, St0) ->
     {Eqs,Vt1,St1} = to_comp_quals(Qs, L, Vt0, St0),
     {Eexpr,St2} = to_expr(Expr, L, Vt1, St1),
     {{bc,L,Eexpr,Eqs},St2}.

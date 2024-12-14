@@ -892,17 +892,6 @@ check_expr(['map-update',Map|As], Env, L, St) ->
     check_map_update('map-update', Map, As, Env, L, St);
 check_expr(['map-remove',Map|Ks], Env, L, St) ->
     check_map_remove('map-remove', Map, Ks, Env, L, St);
-check_expr([function,F,Ar], Env, L, St) ->
-    %% Check for the right types.
-    if is_atom(F) and is_integer(Ar) and (Ar >= 0) ->
-            check_func(F, Ar, Env, L, St);
-       true -> bad_form_error(L, function, St)
-    end;
-check_expr([function,M,F,Ar], _, L, St) ->
-    %% Just need the right types here.
-    if is_atom(M) and is_atom(F) and is_integer(Ar) and (Ar >= 0) -> St;
-       true -> bad_form_error(L, function, St)
-    end;
 %% Check record special forms.
 check_expr(['record',Name|Fs], Env, L, St) ->
     check_record(Name, Fs, Env, L, St);
@@ -934,6 +923,18 @@ check_expr(['struct-field',E,Name,F], Env, L, St0) ->
 check_expr(['struct-update',E,Name|Fs], Env, L, St0) ->
     St1 = check_expr(E, Env, L, St0),
     check_struct(Name, Fs, Env, L, St1);
+%% Function forms.
+check_expr([function,F,Ar], Env, L, St) ->
+    %% Check for the right types.
+    if is_atom(F) and is_integer(Ar) and (Ar >= 0) ->
+            check_func(F, Ar, Env, L, St);
+       true -> bad_form_error(L, function, St)
+    end;
+check_expr([function,M,F,Ar], _, L, St) ->
+    %% Just need the right types here.
+    if is_atom(M) and is_atom(F) and is_integer(Ar) and (Ar >= 0) -> St;
+       true -> bad_form_error(L, function, St)
+    end;
 %% Special known data type operations.
 check_expr(['andalso'|Es], Env, L, St) ->
     check_args(Es, Env, L, St);
@@ -955,11 +956,17 @@ check_expr(['let-macro'|_], _, L, St) ->
     bad_form_error(L, 'let-macro', St);
 %% Check the Core control special forms.
 check_expr(['progn'|B], Env, L, St) ->
-    check_body(progn, B, Env, L, St);
+    check_progn(B, Env, L, St);
+check_expr(['prog1'|B], Env, L, St) ->
+    check_prog1(B, Env, L, St);
+check_expr(['prog2'|B], Env, L, St) ->
+    check_prog2(B, Env, L, St);
 check_expr(['if'|B], Env, L, St) ->
     check_if(B, Env, L, St);
 check_expr(['case'|B], Env, L, St) ->
     check_case(B, Env, L, St);
+check_expr(['cond'|B], Env, L, St) ->
+    check_cond(B, Env, L, St);
 check_expr(['maybe'|B], Env, L, St) ->
     check_maybe(B, Env, L, St);
 check_expr(['receive'|Cls], Env, L, St) ->
@@ -972,13 +979,13 @@ check_expr(['funcall'|As], Env, L, St) ->
     check_args(As, Env, L, St);
 %% List/binary comprehensions.
 check_expr(['lc',Qs,E], Env, L, St) ->
-    check_comp(Qs, E, Env, L, St);
+    check_comprehension(Qs, E, Env, L, St);
 check_expr(['list-comp',Qs,E], Env, L, St) ->
-    check_comp(Qs, E, Env, L, St);
+    check_comprehension(Qs, E, Env, L, St);
 check_expr(['bc',Qs,BS], Env, L, St) ->
-    check_comp(Qs, BS, Env, L, St);
+    check_comprehension(Qs, BS, Env, L, St);
 check_expr(['binary-comp',Qs,BS], Env, L, St) ->
-    check_comp(Qs, BS, Env, L, St);
+    check_comprehension(Qs, BS, Env, L, St);
 %% Finally the general cases.
 check_expr(['call'|As], Env, L, St) ->
     check_args(As, Env, L, St);
@@ -1354,7 +1361,7 @@ check_let(_, _, L, St) ->
 
 check_let_vbs(Vbs, Env, L, St0) ->
     Check = fun (Vb, Pvs, Sta) ->
-                    {Pv,Stb} = check_let_vb(Vb, Env, L, Sta),
+                    {Pv,Stb} = check_let_vb('let', Vb, Env, L, Sta),
                     Stc = case ordsets:intersection(Pv, Pvs) of
                               [] -> Stb;
                               Ivs -> multi_var_error(L, Ivs, Stb)
@@ -1364,18 +1371,18 @@ check_let_vbs(Vbs, Env, L, St0) ->
     {Pvs,St1} = foldl_form(Check, 'let', L, [], St0, Vbs),
     {le_addvs(Pvs, Env),St1}.
 
-%% check_let_vb(VarBind, Env, Line, State) -> {Env,State}.
+%% check_let_vb(Type, VarBind, Env, Line, State) -> {Env,State}.
 %%  Check a variable binding of form [Pat,[when,Guard],Val] or
-%%  [Pat,Val].
+%%  [Pat,Val]. We can use this in different forms.
 
-check_let_vb([_|_]=Vb, Env, L, St0) ->
+check_let_vb(Type, [_|_]=Vb, Env, L, St0) ->
     %% Get the environments right here!
     case pattern_guard(Vb, Env, L, St0) of
         {[Val],Pvs,_,St1} ->                    %One value expression only
             {Pvs,check_expr(Val, Env, L, St1)};
-        {_,_,_,St1} -> {[],bad_form_error(L, 'let', St1)}
+        {_,_,_,St1} -> {[],bad_form_error(L, Type, St1)}
     end;
-check_let_vb(_, _, L, St) -> {[],bad_form_error(L, 'let', St)}.
+check_let_vb(Type, _, _, L, St) -> {[],bad_form_error(L, Type, St)}.
 
 %% check_let_function(FletBody, Env, Line, State) -> {Env,State}.
 %%  Check a let-function form (let-function FuncBindings ... ).
@@ -1428,8 +1435,26 @@ check_let_function_defs(Type, Fdefs, L, St0) ->
     %% Preserve the function ordering for let-function and letrec-function!
     lists:foldr(Check, {[],St0}, Fdefs).
 
+%% check_progn(Body, Env, Line, State) -> State.
+%% check_prog1(Body, Env, Line, State) -> State.
+%% check_prog2(Body, Env, Line, State) -> State.
+%%  Check the progs.
+
+check_progn(Body, Env, L, St) ->
+    check_body(progn, Body, Env, L, St).
+
+check_prog1([_E|_Es]=Body, Env, L, St) ->
+    check_body(prog1, Body, Env, L, St);
+check_prog1(_Body, _Env, L, St) ->
+    bad_form_error(L, 'prog1', St).
+
+check_prog2([_E1,_E2|_Es]=Body, Env, L, St) ->
+    check_body(prog2, Body, Env, L, St);
+check_prog2(_Body, _Env, L, St) ->
+    bad_form_error(L, 'prog2', St).
+
 %% check_if(IfBody, Env, Line, State) -> State.
-%% Check form (if Test True [False]).
+%%  Check form (if Test True [False]).
 
 check_if([Test,True,False], Env, L, St) ->
     check_exprs([Test,True,False], Env, L, St);
@@ -1450,6 +1475,42 @@ check_case(_, _, L, St) ->
 check_case_clauses(Cls, Env, L, St) ->
     foreach_form(fun (Cl, S) -> check_clause('case', Cl, Env, L, S) end,
                  'case', L, St, Cls).
+
+%% check_cond(CondBody, Env, Line, State) -> State.
+%%  Check form (cond Test ...), an empty cond is allowed.
+
+check_cond(Cls, Env, L, St) ->
+    check_cond_clauses(Cls, Env, L, St).
+
+check_cond_clauses([['else'|Body]], Env, L, St) ->
+    check_body('cond', Body, Env, L, St);
+check_cond_clauses([['else'|_]|_], _Env, L, St) ->
+    bad_form_error(L, 'cond', St);
+check_cond_clauses([Cl|Cls], Env, L, St0) ->
+    St1 = check_cond_clause(Cl, Env, L, St0),
+    check_cond_clauses(Cls, Env, L, St1);
+check_cond_clauses([], _Env, _L, St) ->
+    St;
+check_cond_clauses(_Other, _Env, L, St) ->
+    bad_form_error(L, 'cond', St).
+
+check_cond_clause([['?='|TestPat]|Body], Env, L, St) ->
+    check_cond_testpat(TestPat, Body, Env, L, St);
+check_cond_clause([Test|Body], Env, L, St0) ->
+    St1 = check_expr(Test, Env, L, St0),
+    check_body('cond', Body, Env, L, St1);
+check_cond_clause(_Other, _Env, L, St) ->
+    bad_form_error(L, 'cond', St).
+
+check_cond_testpat(TestPat, Body, Env0, L, St0) ->
+    %% Get the environments right here!
+    case pattern_guard(TestPat, Env0, L, St0) of
+        {[Val],_,Env1,St1} ->                   %One value expression only
+            St2 = check_expr(Val, Env0, L, St1),
+            check_body('cond', Body, Env1, L, St2);
+        {_,_,_,St1} ->
+            bad_form_error(L, 'cond', St1)
+    end.
 
 %% check_maybe(MaybeBody, Env, Line, State) -> State.
 %%  Check the maybe body. We don't allow guards in the ?= forms as
@@ -1568,12 +1629,12 @@ check_catch_clause([[tuple,_,_,Stack]|_]=Cl, Env, L, St0) ->
 check_catch_clause([Other|_], _Env, L, St) ->
     add_error(L, {illegal_exception,Other}, St).
 
-%% check_comp(Qualifiers, Expr, Env, LineNumber, State) -> State.
+%% check_comprehension(Qualifiers, Expr, Env, LineNumber, State) -> State.
 %%  Check a comprehension. We can use the same function for both list
 %%  and binary comprehensions here and push any extra tests to the
 %%  Erlang compiler.
 
-check_comp(Qs, Expr, Env0, L, St0) ->
+check_comprehension(Qs, Expr, Env0, L, St0) ->
     %% io:format("~p ~p ~p\n", [L,Qs,BitExpr]),
     {Env1,St1} = check_comp_quals(Qs, Env0, L, St0),
     check_expr(Expr, Env1, L, St1).
@@ -1582,40 +1643,33 @@ check_comp(Qs, Expr, Env0, L, St0) ->
 %%     {Env,State}.
 %%  Note that the explicit guards are now tested as guards.
 
-check_comp_quals([['<-',Pat,E]|Qs], Env0, L, St0) ->
-    %% {E,_,Env1,St1} = pattern_guard([Pat,E], Env0, L, St0),
-    {Pvs,St1} = pattern(Pat, Env0, L, St0),
-    Env1 = le_addvs(Pvs, Env0),
-    St2 = check_expr(E, Env1, L, St1),
-    check_comp_quals(Qs, Env1, L, St2);
-check_comp_quals([['<-',Pat,['when'|G],E]|Qs], Env0, L, St0) ->
-    {Pvs,St1} = pattern(Pat, Env0, L, St0),
-    Env1 = le_addvs(Pvs, Env0),
-    St2 = check_guard(G, Env1, L, St1),
-    St3 = check_expr(E, Env1, L, St2),
-    check_comp_quals(Qs, Env1, L, St3);
-check_comp_quals([['<=',Pat,E]|Qs], Env0, L, St0) ->
-    {Pvs,St1} = check_bitstring_pattern(Pat, Env0, L, St0),
-    Env1 = le_addvs(Pvs, Env0),
-    St2 = check_expr(E, Env1, L, St1),
-    check_comp_quals(Qs, Env1, L, St2);
-check_comp_quals([['<=',Pat,['when'|G],E]|Qs], Env0, L, St0) ->
-    {Pvs,St1} = check_bitstring_pattern(Pat, Env0, L, St0),
-    Env1 = le_addvs(Pvs, Env0),
-    St2 = check_guard(G, Env1, L, St1),
-    St3 = check_expr(E, Env1, L, St2),
-    check_comp_quals(Qs, Env1, L, St3);
-check_comp_quals([Test|Qs], Env, L, St0) ->
-    St1 = check_expr(Test, Env, L, St0),
-    check_comp_quals(Qs, Env, L, St1);
-check_comp_quals([], Env, _L, St) ->
-    {Env,St}.
+check_comp_qual(['<-'|Test], Env0, L, St0) ->
+    case pattern_guard(Test, Env0, L, St0) of
+        {[Exp],_,Env1,St1} ->
+            {Env1,check_expr(Exp, Env0, L, St1)};
+        {_,_,_,St1} ->
+            {Env0,bad_form_error(L, comprehension, St1)}
+    end;
+check_comp_qual(['<='|Test], Env0, L, St0) ->
+    case pattern_guard(Test, Env0, L, St0) of
+        {[Exp],_,Env1,St1} ->
+            {Env1,check_expr(Exp, Env0, L, St1)};
+        {_,_,_,St1} ->
+            {Env0,bad_form_error(L, comprehension, St1)}
+    end;
+check_comp_qual(Test, Env, L, St) ->
+    {Env,check_expr(Test, Env, L, St)}.
+
+check_comp_quals(Qs, Env, L, St) ->
+    check_foldl(fun (Q, E0, S) -> check_comp_qual(Q, E0, L, S) end,
+                fun (S) -> bad_form_error(L, comprehension, S) end,
+                Env, St, Qs).
 
 %% check_bitstring_pattern(Pattern, Env, LineNumber, State) -> {PatVars,State}.
 %%  The bitstring pattern must be a binary.
 
-check_bitstring_pattern(Pat, Env, L, St) ->
-    pattern(Pat, Env, L, St).
+%% check_bitstring_pattern(Pat, Env, L, St) ->
+%%     pattern(Pat, Env, L, St).
 %% check_bitstring_pattern([binary|Segs], Env, L, St) ->
 %%     pat_binary(Segs, [], Env, L, St);
 %% check_bitstring_pattern(Pat, _Env, L, St) ->

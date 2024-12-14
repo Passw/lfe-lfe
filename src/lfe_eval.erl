@@ -57,10 +57,11 @@ format_error({unbound_symbol,S}) ->
     lfe_io:format1(<<"symbol ~w is unbound">>, [S]);
 format_error({undefined_function,{F,A}}) ->
     lfe_io:format1(<<"function ~w/~w undefined">>, [F,A]);
-format_error(if_expression) -> <<"non-boolean if test">>;
 format_error(function_clause) -> <<"no function clause matching">>;
 format_error({case_clause,Val}) ->
     format_value(Val, <<"no case clause matching ">>);
+format_error({nonbool_test,Test}) ->
+    lfe_io:format1(<<"non-boolean ~w test">>, [Test]);
 format_error(illegal_guard) -> <<"illegal guard expression">>;
 format_error({illegal_pattern,Pat}) ->
     format_value(Pat, <<"illegal pattern ">>);
@@ -73,6 +74,8 @@ format_error({argument_limit,Arity}) ->
     lfe_io:format1(<<"too many arguments ~w">>, [Arity]);
 format_error({bad_form,Form}) ->
     lfe_io:format1(<<"bad ~w form">>, [Form]);
+format_error({illegal_form,Form}) ->
+    lfe_io:format1(<<"illegal form ~w">>, [Form]);
 %% Binaries
 format_error(illegal_bitsize) -> <<"illegal bit size">>;
 format_error(illegal_bitseg) -> <<"illegal bit segment">>;
@@ -277,11 +280,17 @@ eval_expr(['letrec-function'|Body], Env) ->
     eval_letrec_function(Body, Env);
 %% Handle the Core control special forms.
 eval_expr(['progn'|Body], Env) ->
-    eval_body(Body, Env);
+    eval_progn(Body, Env);
+eval_expr(['prog1'|Body], Env) ->
+    eval_prog1(Body, Env);
+eval_expr(['prog2'|Body], Env) ->
+    eval_prog2(Body, Env);
 eval_expr(['if'|Body], Env) ->
     eval_if(Body, Env);
 eval_expr(['case'|Body], Env) ->
     eval_case(Body, Env);
+eval_expr(['cond'|Body], Env) ->
+    eval_cond(Body, Env);
 eval_expr(['maybe'|Body], Env) ->
     eval_maybe(Body, Env);
 eval_expr(['receive'|Body], Env) ->
@@ -899,6 +908,29 @@ eval_apply_expr(Func, Es, Env) ->
             erlang:apply(Fun, Es)
     end.
 
+%% eval_progn(PrognBody, Env) -> Value.
+%% eval_prog1(Prog1Body, Env) -> Value.
+%% eval_prog2(Prog2Body, Env) -> Value.
+%%  Evaluate the progs.
+
+eval_progn(Es, Env) ->
+    eval_body(Es, Env).
+
+eval_prog1([E|Es], Env) ->
+    Val = eval_expr(E, Env),
+    eval_body(Es, Env),
+    Val;
+eval_prog1(_Es, _Env) ->
+    bad_form_error('prog1').
+
+eval_prog2([E1,E2|Es], Env) ->
+    eval_expr(E1, Env),
+    Val = eval_expr(E2, Env),
+    eval_body(Es, Env),
+    Val;
+eval_prog2(_Es, _Env) ->
+    bad_form_error('prog2').
+
 %% eval_if(IfBody, Env) -> Value.
 
 eval_if([Test,True], Env) ->                    %Add default false value
@@ -910,7 +942,8 @@ eval_if(Test, True, False, Env) ->
     case eval_expr(Test, Env) of
         true -> eval_expr(True, Env);
         false -> eval_expr(False, Env);
-        _ -> eval_error(if_expression)          %Explicit error here
+        _Other ->
+            eval_error({nonbool_test,'if'})     %Explicit error here
     end.
 
 %% eval_case(CaseBody, Env) -> Value.
@@ -935,7 +968,47 @@ match_clause(V, [[Pat|B0]|Cls], Env) ->
     end;
 match_clause(_, [], _) -> no.
 
-%% eval_maybe(Body, Env) -> Value.
+%% eval_cond(CondBody, Env) -> Value.
+
+eval_cond(Body, Env) ->
+    eval_cond_clauses(Body, Env).
+
+eval_cond_clauses([['else'|Body]], Env) ->
+    eval_body(Body, Env);
+eval_cond_clauses([[['?='|TestPat]|Body]|Cls], Env0) ->
+    case eval_cond_testpat(TestPat, Env0) of
+        {yes,Vbs} ->
+            Env1 = lfe_env:add_vbindings(Vbs, Env0),
+            eval_body(Body, Env1);
+        no -> eval_cond_clauses(Cls, Env0)
+    end;
+eval_cond_clauses([[Test|Body]|Cls], Env) ->
+    case eval_expr(Test, Env) of
+        true -> eval_body(Body, Env);
+        false -> eval_cond_clauses(Cls, Env);
+        _Other -> eval_error({nonbool_test,'cond'})
+    end;
+eval_cond_clauses([], _Env) ->
+    'false';
+eval_cond_clauses(_Other, _Env) ->
+    bad_form_error('cond').
+
+eval_cond_testpat([Pat,E], Env)->
+    Val = eval_expr(E, Env),
+    case match(Pat, Val, Env) of
+        {yes,Vbs} -> {yes,Vbs};
+        no -> no
+    end;
+eval_cond_testpat([Pat,['when'|_]=G,E], Env)->
+    Val = eval_expr(E, Env),
+    case match_when(Pat, Val, [G], Env) of
+        {yes,[],Vbs} -> {yes,Vbs};
+        no -> no
+    end;
+eval_cond_testpat(_Other, _Env) ->
+    bad_form_error('cond').
+
+%% Eval_maybe(Body, Env) -> Value.
 %%  We need to handle ?= in nested lets as well as LFE only supports
 %%  binding variables in let.
 

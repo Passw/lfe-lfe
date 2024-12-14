@@ -100,11 +100,11 @@ is_core_form('letrec-function') -> true;
 is_core_form('let-macro') -> true;
 %% Core control special forms.
 is_core_form('progn') -> true;
-%% is_core_form('prog1') -> true;
-%% is_core_form('prog2') -> true;
+is_core_form('prog1') -> true;
+is_core_form('prog2') -> true;
 is_core_form('if') -> true;
 is_core_form('case') -> true;
-%% is_core_form('cond') -> true;
+is_core_form('cond') -> true;
 is_core_form('maybe') -> true;
 is_core_form('receive') -> true;
 is_core_form('catch') -> true;
