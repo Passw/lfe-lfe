@@ -1081,7 +1081,8 @@ exp_predef([':',M,F|As], Env, St0) when is_atom(M), is_atom(F) ->
 exp_predef([':',M,F|As], _, St) ->
     %% Catch the other junk here.
     {yes,['call',?Q(M),?Q(F)|As], St};
-exp_predef([Fun|As], _, St) when is_atom(Fun) ->
+exp_predef([Fun|As], _, St) when is_atom(Fun), Fun =/= '=:=' ->
+    %% =:= is an operator.
     case string:tokens(atom_to_list(Fun), ":") of
         [M,F] ->
             {yes,[':',list_to_atom(M),list_to_atom(F)|As],St};

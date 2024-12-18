@@ -1460,6 +1460,7 @@ eval_gexpr(['struct-field',E,Name,F], Env) ->
 %% Handle the control special forms.
 eval_gexpr(['progn'|Body], Env) -> eval_gbody(Body, Env);
 eval_gexpr(['if'|Body], Env) -> eval_gif(Body, Env);
+%% Function calls.
 eval_gexpr([call,?Q(erlang),?Q(Fun)|As], Env) ->
     Ar = length(As),
     case lfe_internal:is_guard_bif(Fun, Ar) of
