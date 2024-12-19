@@ -924,46 +924,47 @@ exp_predef([cddddr,E], _, St) -> {yes,[cdr,[cdr,[cdr,[cdr,E]]]],St};
 
 %% Arithmetic operations and comparison operations.
 %%  Don't allow having no arguments and check type with one argument.
-exp_predef(['+'|Es], _, St) ->
-    Exp = exp_arith(Es, '+', 0),
-    {yes,Exp,St};
-exp_predef(['-'|Es], _, St) ->
-    Exp = exp_arith(Es, '-', 0),
-    {yes,Exp,St};
-exp_predef(['*'|Es], _, St) ->
-    Exp = exp_arith(Es, '*', 1),
-    {yes,Exp,St};
-exp_predef(['/'|Es], _, St) ->
-    Exp = exp_arith(Es, '/', 1),
-    {yes,Exp,St};
-%% Logical operators.
-exp_predef([Op|Es], _, St0)
-  when Op =:= 'and'; Op =:= 'or'; Op =:= 'xor' ->
-    {Exp,St1} = exp_logical(Es, Op, St0),
-    {yes,Exp,St1};
+%% exp_predef(['+'|Es], _, St)
+%%   when Op =:= '+'; Op =:= '-'; Op =:= '*'; Op =:= '/' -> 
+%%     Exp = exp_arith(Es, '+', 0),
+%%     {yes,Exp,St};
+%% exp_predef(['-'|Es], _, St) ->
+%%     Exp = exp_arith(Es, '-', 0),
+%%     {yes,Exp,St};
+%% exp_predef(['*'|Es], _, St) ->
+%%     Exp = exp_arith(Es, '*', 1),
+%%     {yes,Exp,St};
+%% exp_predef(['/'|Es], _, St) ->
+%%     Exp = exp_arith(Es, '/', 1),
+%%     {yes,Exp,St};
+%% %% Logical operators.
+%% exp_predef([Op|Es], _, St0)
+%%   when Op =:= 'and'; Op =:= 'or'; Op =:= 'xor' ->
+%%     {Exp,St1} = exp_logical(Es, Op, St0),
+%%     {yes,Exp,St1};
 %% Comparison operators.
 exp_predef(['!='|Es], Env, St) -> exp_predef(['/='|Es], Env, St);
 exp_predef(['==='|Es], Env, St) -> exp_predef(['=:='|Es], Env, St);
 exp_predef(['!=='|Es], Env, St) -> exp_predef(['=/='|Es], Env, St);
-exp_predef([Op|Es], _, St0) when Op == '/=' ; Op == '=/=' ->
-    {Exp,St1} = exp_nequal(Es, Op, St0),
-    {yes,Exp,St1};
-exp_predef([Op|Es], _, St0)
-  when Op =:= '>'; Op =:= '>='; Op =:= '<'; Op =:= '=<';
-       Op =:= '=='; Op =:= '=:=' ->
-    case Es of
-        [_|_] ->
-            {Exp,St1} = exp_comparison(Es, Op, St0),
-            {yes,Exp,St1}
-    end;
+%% exp_predef([Op|Es], _, St0) when Op == '/=' ; Op == '=/=' ->
+%%     {Exp,St1} = exp_nequal(Es, Op, St0),
+%%     {yes,Exp,St1};
+%% exp_predef([Op|Es], _, St0)
+%%   when Op =:= '>'; Op =:= '>='; Op =:= '<'; Op =:= '=<';
+%%        Op =:= '=='; Op =:= '=:=' ->
+%%     case Es of
+%%         [_|_] ->
+%%             {Exp,St1} = exp_comparison(Es, Op, St0),
+%%             {yes,Exp,St1}
+%%     end;
 exp_predef([backquote,Bq], _, St) ->            %We do this here.
     {yes,exp_backquote(Bq),St};
-exp_predef(['++'|Abody], _, St) ->              %List append
-    Exp = exp_append(Abody),
-    {yes,Exp,St};
-exp_predef(['--'|Args], _, St) ->               %List subtract
-    Exp = exp_right_assoc(Args, '--'),
-    {yes,Exp,St};
+%% exp_predef(['++'|Abody], _, St) ->              %List append
+%%     Exp = exp_append(Abody),
+%%     {yes,Exp,St};
+%% exp_predef(['--'|Args], _, St) ->               %List subtract
+%%     Exp = exp_right_assoc(Args, '--'),
+%%     {yes,Exp,St};
 exp_predef(['?'|As], _, St) ->
     Omega = [omega,omega],                      %Match anything and return it
     Exp = case As of
@@ -1166,22 +1167,22 @@ exp_qlc_qual(T, Env, St) -> exp_form(T, Env, St).
 
 %% exp_bif(Bif, Args) -> Expansion.
 
-exp_bif(B, As) -> [call,?Q(erlang),?Q(B)|As].
+%% exp_bif(B, As) -> [call,?Q(erlang),?Q(B)|As].
 
 %% exp_args(Args, State) -> {LetBinds,State}.
 %%  Expand Args into a list of let bindings suitable for a let* or
 %%  nested lets to force sequential left-to-right evaluation.
 
-exp_args(As, St) ->
-    mapfoldl(fun (A, St0) -> {V,St1} = new_symb(St0), {[V,A],St1} end, St, As).
+%% exp_args(As, St) ->
+%%     mapfoldl(fun (A, St0) -> {V,St1} = new_symb(St0), {[V,A],St1} end, St, As).
 
 %% exp_arith(Args, Op, Identity) -> {Exp,State}.
 %%  Expand arithmetic operation using Identity to type check single
 %%  argument.
 
-exp_arith([A], Op, Id) ->                       %Test type
-    exp_left_assoc([Id,A], Op);
-exp_arith(As, Op, _Id) -> exp_left_assoc(As, Op).
+%% exp_arith([A], Op, Id) ->                       %Test type
+%%     exp_left_assoc([Id,A], Op);
+%% exp_arith(As, Op, _Id) -> exp_left_assoc(As, Op).
 
 %% {foldl(fun (A, Acc) -> exp_bif(Op, [Acc,A]) end, hd(As), tl(As)),St}.
 
@@ -1189,85 +1190,85 @@ exp_arith(As, Op, _Id) -> exp_left_assoc(As, Op).
 %%  Expand logical call strictly forcing evaluation of all arguments.
 %%  Note that single argument version may need special casing.
 
-exp_logical([A], Op, St) -> {exp_bif(Op, [A,?Q(true)]),St};
-exp_logical([A,B], Op, St) -> {exp_bif(Op, [A,B]),St};
-exp_logical(As, Op, St) ->
-    {foldl(fun (A, Acc) -> exp_bif(Op, [Acc,A]) end, hd(As), tl(As)),St}.
+%% exp_logical([A], Op, St) -> {exp_bif(Op, [A,?Q(true)]),St};
+%% exp_logical([A,B], Op, St) -> {exp_bif(Op, [A,B]),St};
+%% exp_logical(As, Op, St) ->
+%%     {foldl(fun (A, Acc) -> exp_bif(Op, [Acc,A]) end, hd(As), tl(As)),St}.
 
 %% exp_comparison(Args, Op, State) -> {Exp,State}.
 %%  Expand comparison test strictly forcing evaluation of all
 %%  arguments. Note that single argument version may need special
 %%  casing.
 
-exp_comparison([A], _, St) ->            %Force evaluation
-    {[progn,A,?Q(true)],St};
-exp_comparison([A,B], Op, St) -> {exp_bif(Op, [A,B]),St};
-exp_comparison(As, Op, St0) ->
-    {Ls,St1} = exp_args(As, St0),
-    Ts = op_pairs(Ls, Op),
-    {exp_let_star([Ls,exp_andalso(Ts)]),St1}.
+%% exp_comparison([A], _, St) ->            %Force evaluation
+%%     {[progn,A,?Q(true)],St};
+%% exp_comparison([A,B], Op, St) -> {exp_bif(Op, [A,B]),St};
+%% exp_comparison(As, Op, St0) ->
+%%     {Ls,St1} = exp_args(As, St0),
+%%     Ts = op_pairs(Ls, Op),
+%%     {exp_let_star([Ls,exp_andalso(Ts)]),St1}.
 
-op_pairs(Ls, Op) ->
-    Ps = lists:zip(lists:droplast(Ls),tl(Ls)),
-    [exp_bif(Op, [V1,V2]) || {[V1,_],[V2,_]} <- Ps].
+%% op_pairs(Ls, Op) ->
+%%     Ps = lists:zip(lists:droplast(Ls),tl(Ls)),
+%%     [exp_bif(Op, [V1,V2]) || {[V1,_],[V2,_]} <- Ps].
 
 %% exp_nequal(Args, Op, State) -> {Exp,State}.
 %%  Expand not equal test strictly forcing evaluation of all
 %%  arguments. We need to compare all the arguments with each other.
 
-exp_nequal([A], _, St) ->            %Force evaluation
-    {[progn,A,?Q(true)],St};
-exp_nequal([A,B], Op, St) -> {exp_bif(Op, [A,B]),St};
-exp_nequal(As, Op, St0) ->
-    {Ls,St1} = exp_args(As, St0),
-    Ts = op_all_pairs(Ls, Op),
-    {exp_let_star([Ls,exp_andalso(Ts)]),St1}.
+%% exp_nequal([A], _, St) ->                       %Force evaluation
+%%     {[progn,A,?Q(true)],St};
+%% exp_nequal([A,B], Op, St) -> {exp_bif(Op, [A,B]),St};
+%% exp_nequal(As, Op, St0) ->
+%%     {Ls,St1} = exp_args(As, St0),
+%%     Ts = op_all_pairs(Ls, Op),
+%%     {exp_let_star([Ls,exp_andalso(Ts)]),St1}.
 
-op_all_pairs([], _) -> [];
-op_all_pairs([[V,_]|Ls], Op) ->
-    [ exp_bif(Op, [V,V1]) || [V1,_] <- Ls] ++ op_all_pairs(Ls, Op).
+%% op_all_pairs([], _) -> [];
+%% op_all_pairs([[V,_]|Ls], Op) ->
+%%     [ exp_bif(Op, [V,V1]) || [V1,_] <- Ls] ++ op_all_pairs(Ls, Op).
 
 %% exp_left_assoc(List, Op) -> Expansion.
 %%  Expand the left associated operator into sequence of calls.
 
-exp_left_assoc([E1,E2|Es], Op) ->
-    exp_left_assoc([exp_bif(Op, [E1,E2])|Es], Op);
-exp_left_assoc([E], _Op) -> E.
+%% exp_left_assoc([E1,E2|Es], Op) ->
+%%     exp_left_assoc([exp_bif(Op, [E1,E2])|Es], Op);
+%% exp_left_assoc([E], _Op) -> E.
 
 %% exp_right_assoc(List, Op) -> Expansion.
 %%  Expand the right associated operator into sequence of calls.
 
-exp_right_assoc([E], _Op) -> E;
-exp_right_assoc([E|Es], Op) ->
-    exp_bif(Op, [E,exp_right_assoc(Es, Op)]).
+%% exp_right_assoc([E], _Op) -> E;
+%% exp_right_assoc([E|Es], Op) ->
+%%     exp_bif(Op, [E,exp_right_assoc(Es, Op)]).
 
 %% exp_append(Args) -> Expansion.
 %%  Expand ++ in such a way as to allow its use in patterns. There are
 %%  a lot of interesting cases here. Only be smart with proper forms.
 
-exp_append(Args) ->
-    ConsList = fun (E, Cs) -> [cons,E,Cs] end,
-    case Args of
-        %% Cases with quoted lists.
-        [?Q([A|Qas])|As] -> [cons,?Q(A),exp_append([?Q(Qas)|As])];
-        [?Q([])|As] -> exp_append(As);
-        %% Cases with explicit cons/list/list*.
-        [['list*',A]|As] -> exp_append([A|As]);
-        [['list*',A|Las]|As] -> [cons,A,exp_append([['list*'|Las]|As])];
-        [[list|Las]|As] -> lists:foldr(ConsList, exp_append(As), Las);
-        [[cons,H,T]|As] -> [cons,H,exp_append([T|As])];
-        [[]|As] -> exp_append(As);
-        [A|As] ->
-            case lfe_lib:is_posint_list(A) of
-                true ->
-                    lists:foldr(ConsList, exp_append(As), A);
-                false ->
-                    if As =:= [] -> A;
-                       true -> exp_bif('++', [A,exp_append(As)])
-                    end
-            end;
-        [] -> []
-    end.
+%% exp_append(Args) ->
+%%     ConsList = fun (E, Cs) -> [cons,E,Cs] end,
+%%     case Args of
+%%         %% Cases with quoted lists.
+%%         [?Q([A|Qas])|As] -> [cons,?Q(A),exp_append([?Q(Qas)|As])];
+%%         [?Q([])|As] -> exp_append(As);
+%%         %% Cases with explicit cons/list/list*.
+%%         [['list*',A]|As] -> exp_append([A|As]);
+%%         [['list*',A|Las]|As] -> [cons,A,exp_append([['list*'|Las]|As])];
+%%         [[list|Las]|As] -> lists:foldr(ConsList, exp_append(As), Las);
+%%         [[cons,H,T]|As] -> [cons,H,exp_append([T|As])];
+%%         [[]|As] -> exp_append(As);
+%%         [A|As] ->
+%%             case lfe_lib:is_posint_list(A) of
+%%                 true ->
+%%                     lists:foldr(ConsList, exp_append(As), A);
+%%                 false ->
+%%                     if As =:= [] -> A;
+%%                        true -> exp_bif('++', [A,exp_append(As)])
+%%                     end
+%%             end;
+%%         [] -> []
+%%     end.
 
 %% exp_list_star(ListBody) -> Cons.
 
@@ -1311,10 +1312,10 @@ exp_do([Pars,[Test,Ret]|Body], St0) ->
 %% exp_andalso(AndAlsoBody) -> Ifs.
 %% exp_orelse(OrElseBody) -> Ifs.
 
-exp_andalso([E]) -> E;                          %Let user check last call
-exp_andalso([E|Es]) ->
-    ['if',E,exp_andalso(Es),?Q(false)];
-exp_andalso([]) -> ?Q(true).
+%% exp_andalso([E]) -> E;                          %Let user check last call
+%% exp_andalso([E|Es]) ->
+%%     ['if',E,exp_andalso(Es),?Q(false)];
+%% exp_andalso([]) -> ?Q(true).
 
 %% exp_orelse([E]) -> E;                           %Let user check last call
 %% exp_orelse([E|Es]) -> ['if',E,?Q(true),exp_orelse(Es)];

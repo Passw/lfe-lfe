@@ -105,6 +105,9 @@ format_error({redefine_module_alias,A}) ->
     lfe_io:format1(<<"redefining ~w module alias">>, [A]);
 format_error({circular_module_alias,A}) ->
     lfe_io:format1(<<"circular module alias for ~w">>, [A]);
+%% Operators.
+format_error({illegal_operator_call,Op}) ->
+    lfe_io:format1(<<"illegal operator ~w call">>, [Op]);
 %% Others
 format_error({illegal_literal,Lit}) ->
     lfe_io:format1(<<"illegal literal value ~w">>, [Lit]);
@@ -781,19 +784,18 @@ check_function_bindings(Fbs0, St0) ->
             end,
     lists:foldl(Check, {orddict:new(),St0}, Fbs0).
 
-%% check_core_forms(Fs, St) ->
-%%     Check = fun ({Name,_Ar}, L, St0) ->
-%%                     ?IF(lfe_internal:is_core_form(Name),
-%%                         add_warning(L, {redefine_core_form,Name}, St0),
-%%                         St0)
-%%             end,
-%%     orddict:fold(Check, St, Fs).
+%% check_core_functions(Funcs, State) -> State.
+%%  Check if the functions in the Funcs orddict are core forms, which
+%%  is an error, or core functions which is just a warning.
 
 check_core_functions(Fs, St) ->
-    Check = fun ({Name,Ar}, L, St0) ->
+    Check =
+        fun ({Name,Ar}, L, St0) ->
+                ?IF(lfe_internal:is_core_form(Name),
+                    add_error(L, {redefine_core_form,Name}, St0),
                     ?IF(lfe_internal:is_core_func(Name, Ar),
                         add_warning(L, {redefine_core_function,{Name,Ar}}, St0),
-                        St0)
+                        St0))
             end,
     orddict:fold(Check, St, Fs).
 
@@ -870,18 +872,9 @@ check_expr([tuple|As], Env, L, St) -> check_args(As, Env, L, St);
 check_expr([tref|[_,_]=As], Env, L, St) -> check_args(As, Env, L, St);
 check_expr([tset|[_,_,_]=As], Env, L, St) -> check_args(As, Env, L, St);
 check_expr([binary|Segs], Env, L, St) -> expr_bitsegs(Segs, Env, L, St);
+%% Check map special forms.
 check_expr([map|As], Env, L, St) ->
     check_map(As, Env, L, St);
-check_expr(['msiz',Map], Env, L, St) ->
-    check_map_size(msiz, Map, Env, L, St);
-check_expr(['mref',Map,Key], Env, L, St) ->
-    check_map_get(mref, Map, Key, Env, L, St);
-check_expr(['mset',Map|As], Env, L, St) ->
-    check_map_set(mset, Map, As, Env, L, St);
-check_expr(['mupd',Map|As], Env, L, St) ->
-    check_map_update(mupd, Map, As, Env, L, St);
-check_expr(['mrem',Map|Ks], Env, L, St) ->
-    check_map_remove(mrem, Map, Ks, Env, L, St);
 check_expr(['map-size',Map], Env, L, St) ->
     check_map_size('map-size', Map, Env, L, St);
 check_expr(['map-get',Map,Key], Env, L, St) ->
@@ -892,6 +885,16 @@ check_expr(['map-update',Map|As], Env, L, St) ->
     check_map_update('map-update', Map, As, Env, L, St);
 check_expr(['map-remove',Map|Ks], Env, L, St) ->
     check_map_remove('map-remove', Map, Ks, Env, L, St);
+check_expr([msiz,Map], Env, L, St) ->
+    check_map_size(msiz, Map, Env, L, St);
+check_expr(['mref',Map,Key], Env, L, St) ->
+    check_map_get(mref, Map, Key, Env, L, St);
+check_expr(['mset',Map|As], Env, L, St) ->
+    check_map_set(mset, Map, As, Env, L, St);
+check_expr(['mupd',Map|As], Env, L, St) ->
+    check_map_update(mupd, Map, As, Env, L, St);
+check_expr(['mrem',Map|Ks], Env, L, St) ->
+    check_map_remove(mrem, Map, Ks, Env, L, St);
 %% Check record special forms.
 check_expr(['record',Name|Fs], Env, L, St) ->
     check_record(Name, Fs, Env, L, St);
@@ -990,8 +993,24 @@ check_expr(['binary-comp',Qs,BS], Env, L, St) ->
 check_expr(['call'|As], Env, L, St) ->
     check_args(As, Env, L, St);
 check_expr([Fun|As], Env, L, St0) when is_atom(Fun) ->
-    St1 = check_args(As, Env, L, St0),          %Check arguments first
-    check_func(Fun, safe_length(As), Env, L, St1);
+    %% St1 = check_args(As, Env, L, St0),          %Check arguments first
+    Arity = safe_length(As),
+    %% io:format("cf ~p\n", [{[Fun|As],Fun,Arity}]),
+    %% Check if it is an operator function in which case handle it
+    %% specifically here.
+    ?COND([{fun () -> lfe_internal:is_arith_func(Fun, Arity) end,
+            fun () -> check_arith_func(Fun, As, Env, L, St0) end},
+           {fun ()-> lfe_internal:is_bit_func(Fun, Arity) end,
+            fun () -> check_bit_func(Fun, As, Env, L, St0) end},
+           {fun ()-> lfe_internal:is_bool_func(Fun, Arity) end,
+            fun () -> check_bool_func(Fun, As, Env, L, St0) end},
+           {fun ()-> lfe_internal:is_comp_func(Fun, Arity) end,
+            fun () -> check_comp_func(Fun, As, Env, L, St0) end},
+           {fun () -> lfe_internal:is_list_func(Fun, Arity) end,
+            fun () -> check_list_func(Fun, As, Env, L, St0) end}
+          ],
+          %% And the catch-all cond else clause.
+          fun () -> check_func(Fun, Arity, As, Env, L, St0) end);
 check_expr([_|As]=S, Env, L, St0) ->            %Test if literal string
     case lfe_lib:is_posint_list(S) of
         true -> St0;
@@ -1005,6 +1024,27 @@ check_expr(Symb, Env, L, St) when is_atom(Symb) ->
 check_expr(Lit, Env, L, St) ->                  %Everything else is a literal
     literal(Lit, Env, L, St).
 
+%% check_arith_func(ArithOperator, Args, Env, L, State) -> State.
+%% check_bit_func(BitOperator, Args, Env, L, State) -> State.
+%% check_bool_func(BoolOperator, Args, Env, L, State) -> State.
+%% check_comp_func(CompOperator, Args, Env, L, State) -> State.
+%% check_list_func(ListOperator, Args, Env, L, State) -> State.
+
+check_arith_func(_Op, As, Env, L, St) ->
+    check_args(As, Env, L, St).
+
+check_bit_func(_Op, As, Env, L, St) ->
+    check_args(As, Env, L, St).
+
+check_bool_func(_Op, As, Env, L, St) ->
+    check_args(As, Env, L, St).
+
+check_comp_func(_Op, As, Env, L, St) ->
+    check_args(As, Env, L, St).
+
+check_list_func(_Op, As, Env, L, St) ->
+    check_args(As, Env, L, St).
+
 %% check_symb(Symbol, Env, Line, State) -> State.
 %%  Check if Symbol is bound.
 
@@ -1015,11 +1055,24 @@ check_symb(Symb, Env, L, St) ->
         false -> add_error(L, {unbound_symbol,Symb}, St)
     end.
 
+%% check_op(Op, Arity, Env, L, State) -> State.
+%%  Check if the op has at least one argument.
+
+%% check_op(Op, Arity, _Env, L, St) ->
+%%     if Arity >= 1 -> St;
+%%        true ->
+%%             add_error(L, {illegal_operator_call,Op}, St)
+%%     end.
+
+%% check_func(Func, Arity, Args, Env, Line, State) -> State.
 %% check_func(Func, Arity, Env, Line, State) -> State.
 %%  Check if Func/Arity is bound or an auto-imported BIF.
 
+check_func(F, Ar, As, Env, L, St0) ->
+    St1 = check_args(As, Env, L, St0),
+    check_func(F, Ar, Env, L, St1).
+
 check_func(F, Ar, Env, L, St) ->
-    %% case lfe_env:is_fbound(F, Ar, Env) orelse
     case le_hasf(F, Ar, Env) orelse
         lfe_internal:is_lfe_bif(F, Ar) orelse
         lfe_internal:is_erl_bif(F, Ar) of
@@ -1559,9 +1612,9 @@ check_maybe_else(Cls, Env, L, St) ->
                  'else', L, St, Cls).
 
 check_maybe_else_clause([Pat|Rest], Env0, L, St0) ->
-    St1 = case safe_length(Pat) of
-              1 -> St0;
-              _Other -> bad_form_error(L, 'else', St0)
+    Arity = safe_length(Pat),
+    St1 = if Arity =:= 1 -> St0;
+             true -> bad_form_error(L, 'else', St0)
           end,
     check_clause('maybe', [[list|Pat]|Rest], Env0, L, St1);
 check_maybe_else_clause(_, _, L, St) ->
@@ -1758,8 +1811,9 @@ check_gexpr(['orelse'|Es], Env, L, St) ->
     check_gargs(Es, Env, L, St);
 check_gexpr([call,?Q(erlang),?Q(Fun)|As], Env, L, St0) ->
     St1 = check_gargs(As, Env, L, St0),
+    Arity = safe_length(As),
     %% It must be a legal guard bif here.
-    case lfe_internal:is_guard_bif(Fun, safe_length(As)) of
+    case lfe_internal:is_guard_bif(Fun, Arity) of
         true -> St1;
         false -> illegal_guard_error(L, St1)
     end;
@@ -1767,25 +1821,61 @@ check_gexpr([call,?Q(erlang),?Q(Fun)|As], Env, L, St0) ->
 check_gexpr([call|_], _, L, St) ->              %Other calls not allowed
     illegal_guard_error(L, St);
 check_gexpr([Fun|As], Env, L, St0) when is_atom(Fun) ->
-    St1 = check_gargs(As, Env, L, St0),
-    check_gfunc(Fun, safe_length(As), Env, L, St1);
+    %% St1 = check_gargs(As, Env, L, St0),
+    Arity = safe_length(As),
+    %% Check if it is an operator function in which case handle it
+    %% specifically here.
+    ?COND([{fun () -> lfe_internal:is_arith_func(Fun, Arity) end,
+            fun () -> check_arith_gfunc(Fun, As, Env, L, St0) end},
+           {fun ()-> lfe_internal:is_bit_func(Fun, Arity) end,
+            fun () -> check_bit_gfunc(Fun, As, Env, L, St0) end},
+           {fun ()-> lfe_internal:is_bool_func(Fun, Arity) end,
+            fun () -> check_bool_gfunc(Fun, As, Env, L, St0) end},
+           {fun ()-> lfe_internal:is_comp_func(Fun, Arity) end,
+            fun () -> check_comp_gfunc(Fun, As, Env, L, St0) end},
+           {fun () -> lfe_internal:is_list_func(Fun, Arity) end,
+            fun () -> check_list_gfunc(Fun, As, Env, L, St0) end}
+          ],
+          %% And the catch-all cond else clause.
+          fun () -> check_gfunc(Fun, Arity, As, Env, L, St0) end);
 check_gexpr([_|As]=S, Env, L, St0) ->            %Test if literal string
     case lfe_lib:is_posint_list(S) of
         true -> St0;
         false ->
             %% Function here is an expression, report error and check args.
-            St1 = bad_guard_form_error(L, application, St0),
-            check_gargs(As, Env, L, St1)
+            St1 = bad_form_error(L, application, St0),
+            check_args(As, Env, L, St1)
     end;
 check_gexpr(Symb, Env, L, St) when is_atom(Symb) ->
     check_symb(Symb, Env, L, St);
-check_gexpr(Lit, Env, L, St) ->                 %Everything else is a literal
+check_gexpr(Lit, Env, L, St) ->                  %Everything else is a literal
     literal(Lit, Env, L, St).
 
-%% check_gfunc(Func, Arity, Env, Line, State) -> State.
+%% check_arith_gfunc(ArithOperator, Args, Env, L, State) -> State.
+%% check_bit_gfunc(BitOperator, Args, Env, L, State) -> State.
+%% check_bool_gfunc(BoolOperator, Args, Env, L, State) -> State.
+%% check_comp_gfunc(CompOperator, Args, Env, L, State) -> State.
+%% check_list_gfunc(ListOperator, Args, Env, L, State) -> State.
+
+check_arith_gfunc(_Op, As, Env, L, St) ->
+    check_gargs(As, Env, L, St).
+
+check_bit_gfunc(_Op, As, Env, L, St) ->
+    check_gargs(As, Env, L, St).
+
+check_bool_gfunc(_Op, As, Env, L, St) ->
+    check_gargs(As, Env, L, St).
+
+check_comp_gfunc(_Op, As, Env, L, St) ->
+    check_gargs(As, Env, L, St).
+
+check_list_gfunc(_Op, As, Env, L, St) ->
+    check_gargs(As, Env, L, St).
+
+%% check_gfunc(Func, Arity, Args, Env, Line, State) -> State.
 %%  Check if Func/Arity is not bound and an auto-imported guard BIF.
 
-check_gfunc(F, Ar, Env, L, St) ->
+check_gfunc(F, Ar, _As, Env, L, St) ->
     %% case (not lfe_env:is_fbound(F, Ar, Env)) andalso
     case (not le_hasf(F, Ar, Env)) andalso
          lfe_internal:is_guard_bif(F, Ar) of
@@ -1936,6 +2026,9 @@ pattern(['make-record',Name|Fs], Pvs, Env, L, St) ->
     check_record_pat(Name, Fs, Pvs, Env, L, St);
 pattern(['record-index',Name,F], _Pvs, _Env, L, St) ->
     check_record_field(Name, F, L, St);
+%% Test.
+pattern(['++'|Ps], Pvs, Env, L, St) ->
+    pat_list(Ps, Pvs, Env, L, St);
 %% Check struct patterns.
 pattern(['struct',Name|Fs], Pvs, Env, L, St) ->
     check_struct_pat(Name, Fs, Pvs, Env, L, St);

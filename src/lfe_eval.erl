@@ -310,6 +310,9 @@ eval_expr(['bc',Qs,E], Env) ->
     eval_bin_comp(Qs, E, Env);
 eval_expr(['binary-comp',Qs,E], Env) ->
     eval_bin_comp(Qs, E, Env);
+%% Tests.
+eval_expr(['++'|Es], Env) ->
+    eval_append(Es, Env);
 %% General functions calls.
 eval_expr(['call'|Body], Env) ->
     eval_call(Body, Env);
@@ -1356,6 +1359,28 @@ eval_list_gen(Gen, Env) ->
 eval_bin_gen(Gen, Env) ->
     eval_expr(Gen, Env).
 
+%% eval_append(Args, Env) -> Value.
+%%  We do a right associative building of the output list to minimise
+%%  copying.
+
+eval_append(Es, Env) ->
+    eval_append_args(Es, Env).
+    
+eval_append_args([E], Env) ->
+    eval_expr(E, Env);
+eval_append_args([E1|Es], Env) ->
+    Ee1 = eval_expr(E1, Env),
+    Ees = eval_append_args(Es, Env),
+    Ee1 ++ Ees.
+    %% lists:append(Ee1, Ees).
+
+%% to_right_assoc_args(Op, [E1,E2], _Extra, L) ->
+%%     {op,L,Op,E1,E2};
+%% to_right_assoc_args(Op, [E1|Es], _Extra, L) ->
+%%     Opes = to_right_assoc_args(Op, Es, Extra, L),
+%%     {op,L,Op,E1,Opes}.
+%% to_right_assoc_args(Op, 
+
 %% eval_call([Mod,Func|Args], Env) -> Value.
 %%  Evaluate the module, function and args and then apply the function.
 
@@ -1460,6 +1485,9 @@ eval_gexpr(['struct-field',E,Name,F], Env) ->
 %% Handle the control special forms.
 eval_gexpr(['progn'|Body], Env) -> eval_gbody(Body, Env);
 eval_gexpr(['if'|Body], Env) -> eval_gif(Body, Env);
+%% Tests.
+eval_gexpr(['++'|Es], Env) ->
+    eval_gappend(Es, Env);
 %% Function calls.
 eval_gexpr([call,?Q(erlang),?Q(Fun)|As], Env) ->
     Ar = length(As),
@@ -1575,6 +1603,20 @@ eval_gif(Test, True, False, Env) ->
         false -> eval_gexpr(False, Env)
     end.
 
+%% eval_gappend(Args, Env) -> Value.
+%%  We do a right associative building of the output list to minimise
+%%  copying.
+
+eval_gappend(Es, Env) ->
+    eval_gappend_args(Es, Env).
+    
+eval_gappend_args([E], Env) ->
+    eval_gexpr(E, Env);
+eval_gappend_args([E1|Es], Env) ->
+    Ee1 = eval_gexpr(E1, Env),
+    Ees = eval_gappend_args(Es, Env),
+    Ee1 ++ Ees.
+
 %% match(Pattern, Value, Env) -> {yes,PatBindings} | no.
 %%  Try to match Pattern against Value within the current environment
 %%  returning bindings. Bindings is an orddict.
@@ -1626,6 +1668,9 @@ match(['record-index',Name,F], Val, Pbs, Env) ->
 %% Struct patterns.
 match(['struct',Name|Fs], Val, Pbs, Env) ->
     match_struct_map(Name, Fs, Val, Pbs, Env);
+%% Tests.
+match(['++'|Ps], Val, Pbs, Env) ->
+    match_append(Ps, Val, Pbs, Env);
 %% No constructor list forms.
 match([_|_]=List, Val, Pbs, _) ->               %No constructor
     case lfe_lib:is_posint_list(List) of        %Accept strings
@@ -1655,6 +1700,28 @@ match_list([P|Ps], [V|Vs], Pbs0, Env) ->
     end;
 match_list([], [], Pbs, _) -> {yes,Pbs};
 match_list(_, _, _, _) -> no.
+
+match_append([P|Ps], Vs0, Pbs0, Env) ->
+    case match_app_pat(P, Vs0, Pbs0, Env) of
+        {yes,Vs1,Pbs1} ->
+            match_append(Ps, Vs1, Pbs1, Env);
+        no -> no
+    end;
+match_append([], [], Pbs, _Env) ->
+    {yes,Pbs};
+match_append(_, _, _, _) ->
+    no.
+
+match_app_pat([P|Ps], [V|Vs], Pbs0, Env) ->
+    case match(P, V, Pbs0, Env) of
+        {yes,Pbs1} ->
+            match_app_pat(Ps, Vs, Pbs1, Env);
+        no -> no
+    end;
+match_app_pat([], Vs, Pbs, _Env) ->
+    {yes,Vs,Pbs};
+match_app_pat(_, _, _, _) ->
+    no.
 
 match_symb('_', _, Pbs, _) -> {yes,Pbs};        %Don't care variable.
 match_symb(S, Val, Pbs, _) ->
